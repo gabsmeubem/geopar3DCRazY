@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Oscilloscope</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #000;
+            color: #0f0;
+            font-family: monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        canvas {
+            border: 1px solid #0f0;
+            background: #001100;
+            cursor: crosshair;
+        }
+        .controls {
+            margin: 20px 0;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 20px;
+            width: 100%;
+            max-width: 800px;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+        button {
+            background: #0f0;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-family: monospace;
+            border-radius: 3px;
+        }
+        button:hover {
+            background: #0a0;
+        }
+        input[type="range"] {
+            width: 100px;
+        }
+        input[type="color"] {
+            width: 50px;
+            height: 30px;
+            border: none;
+            cursor: pointer;
+        }
+        input[type="file"] {
+            color: #0f0;
+        }
+        select {
+            background: #000;
+            color: #0f0;
+            border: 1px solid #0f0;
+            padding: 5px;
+        }
+        #three-container {
+            display: none;
+            border: 1px solid #0f0;
+        }
+        .mode-switch {
+            display: flex;
+            gap: 10px;
+        }
+        .mode-switch button {
+            padding: 5px 15px;
+        }
+        .mode-switch button.active {
+            background: #0a0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Enhanced Oscilloscope & Lissajous Visualizer</h1>
+    
+    <div class="controls">
+        <div class="control-group">
+            <label>Audio Input</label>
+            <button id="startBtn">Start Microphone</button>
+            <input type="file" id="audioFile" accept="audio/*">
+        </div>
+        
+        <div class="control-group">
+            <label>Mode</label>
+            <div class="mode-switch">
+                <button id="mode2d" class="active">2D</button>
+                <button id="mode3d">3D</button>
+            </div>
+            <select id="visualMode">
+                <option value="sinewave">Sinewave</option>
+                <option value="lissajous">Lissajous</option>
+            </select>
+        </div>
+        
+        <div class="control-group">
+            <label>Gain</label>
+            <input type="range" id="gainSlider" min="0" max="5" value="1" step="0.1">
+            <span id="gainValue">1.0</span>
+        </div>
+        
+        <div class="control-group">
+            <label>Color</label>
+            <input type="color" id="colorPicker" value="#00ff00">
+            <button id="randomColor">Random</button>
+        </div>
+        
+        <div class="control-group">
+            <label>
+                <span>X Frequency</span>
+                <input type="range" id="freqXSlider" min="0.5" max="5" value="1" step="0.1">
+            </label>
+            <label>
+                <span>Y Frequency</span>
+                <input type="range" id="freqYSlider" min="0.5" max="5" value="2" step="0.1">
+            </label>
+            <label>
+                <span>Z Frequency</span>
+                <input type="range" id="freqZSlider" min="0.5" max="5" value="1.5" step="0.1">
+            </label>
+        </div>
+        
+        <div class="control-group">
+            <label>
+                <span>Music Reactivity</span>
+                <input type="range" id="reactivitySlider" min="0" max="5" value="2" step="0.1">
+            </label>
+            <span id="reactivityValue">2.0</span>
+        </div>
+        
+        <div class="control-group">
+            <label>
+                <span>Trail Effect</span>
+                <input type="range" id="trailSlider" min="0" max="1" value="0.1" step="0.01">
+            </label>
+            <span id="reactivityValue">0.1</span>
+        </div>
+        
+        <div class="control-group">
+            <label>Export</label>
+            <button id="saveImage">Save PNG</button>
+            <button id="fullscreen">Fullscreen</button>
+        </div>
+    </div>
+    
+    <canvas id="canvas" width="800" height="400"></canvas>
+    <div id="three-container"></div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const threeContainer = document.getElementById('three-container');
+        
+        // Controls
+        const startBtn = document.getElementById('startBtn');
+        const audioFile = document.getElementById('audioFile');
+        const mode2dBtn = document.getElementById('mode2d');
+        const mode3dBtn = document.getElementById('mode3d');
+        const visualMode = document.getElementById('visualMode');
+        const gainSlider = document.getElementById('gainSlider');
+        const gainValue = document.getElementById('gainValue');
+        const colorPicker = document.getElementById('colorPicker');
+        const randomColor = document.getElementById('randomColor');
+        const freqXSlider = document.getElementById('freqXSlider');
+        const freqYSlider = document.getElementById('freqYSlider');
+        const freqZSlider = document.getElementById('freqZSlider');
+        const reactivitySlider = document.getElementById('reactivitySlider');
+        const reactivityValue = document.getElementById('reactivityValue');
+        const trailSlider = document.getElementById('trailSlider');
+        const saveImage = document.getElementById('saveImage');
+        const fullscreenBtn = document.getElementById('fullscreen');
+        
+        // Audio variables
+        let audioContext;
+        let analyser;
+        let dataArray;
+        let frequencyData;
+        let isRunning = false;
+        let audioSource;
+        
+        // 3D variables
+        let scene, camera, renderer, lissajousPoints, lissajousMaterial;
+        let is3DMode = false;
+        
+        // Animation variables
+        let time = 0;
+        let lissajousHistory = [];
+        
+        // Music-reactive variables
+        let baseFreqX = 1;
+        let baseFreqY = 2;
+        let baseFreqZ = 1.5;
+        let musicInfluence = 1;
+        let smoothedBass = 0;
+        let smoothedMid = 0;
+        let smoothedTreble = 0;
+        let smoothedEnergy = 0;
+        
+        // Event listeners
+        startBtn.addEventListener('click', toggleMicrophone);
+        audioFile.addEventListener('change', loadAudioFile);
+        mode2dBtn.addEventListener('click', () => switchMode(false));
+        mode3dBtn.addEventListener('click', () => switchMode(true));
+        gainSlider.addEventListener('input', updateGainDisplay);
+        reactivitySlider.addEventListener('input', updateReactivityDisplay);
+        freqXSlider.addEventListener('input', updateBaseFrequencies);
+        freqYSlider.addEventListener('input', updateBaseFrequencies);
+        freqZSlider.addEventListener('input', updateBaseFrequencies);
+        randomColor.addEventListener('click', setRandomColor);
+        saveImage.addEventListener('click', exportImage);
+        fullscreenBtn.addEventListener('click', toggleFullscreen);
+        
+        function updateGainDisplay() {
+            gainValue.textContent = gainSlider.value;
+        }
+        
+        function updateReactivityDisplay() {
+            reactivityValue.textContent = reactivitySlider.value;
+        }
+        
+        function updateBaseFrequencies() {
+            baseFreqX = parseFloat(freqXSlider.value);
+            baseFreqY = parseFloat(freqYSlider.value);
+            baseFreqZ = parseFloat(freqZSlider.value);
+        }
+        
+        function setRandomColor() {
+            const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ffffff', '#ffa500'];
+            colorPicker.value = colors[Math.floor(Math.random() * colors.length)];
+        }
+        
+        async function toggleMicrophone() {
+            if (!isRunning) {
+                try {
+                    // Ensure we create AudioContext on user gesture
+                    if (!audioContext) {
+                        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    }
+                    
+                    if (audioContext.state === 'suspended') {
+                        await audioContext.resume();
+                    }
+                    
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            echoCancellation: false,
+                            autoGainControl: false,
+                            noiseSuppression: false
+                        } 
+                    });
+                    
+                    analyser = audioContext.createAnalyser();
+                    analyser.fftSize = 2048;
+                    analyser.smoothingTimeConstant = 0.8;
+                    
+                    audioSource = audioContext.createMediaStreamSource(stream);
+                    audioSource.connect(analyser);
+                    
+                    setupAnalyser();
+                    startBtn.textContent = 'Stop Microphone';
+                    isRunning = true;
+                    animate();
+                    
+                    console.log('Audio initialized successfully');
+                } catch (err) {
+                    console.error('Audio initialization error:', err);
+                    alert('Error accessing microphone. Make sure you\'re using HTTPS or localhost, and that microphone permissions are granted.');
+                }
+            } else {
+                stopAudio();
+            }
+        }
+        
+        async function loadAudioFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            try {
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+                
+                const arrayBuffer = await file.arrayBuffer();
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                
+                if (analyser) {
+                    analyser.disconnect();
+                }
+                
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 2048;
+                analyser.smoothingTimeConstant = 0.8;
+                
+                if (audioSource) {
+                    audioSource.disconnect();
+                }
+                
+                audioSource = audioContext.createBufferSource();
+                audioSource.buffer = audioBuffer;
+                audioSource.loop = true;
+                
+                audioSource.connect(analyser);
+                audioSource.connect(audioContext.destination);
+                audioSource.start(0);
+                
+                setupAnalyser();
+                startBtn.textContent = 'Playing File';
+                isRunning = true;
+                animate();
+                
+                console.log('Audio file loaded successfully');
+            } catch (err) {
+                console.error('Audio file loading error:', err);
+                alert('Error loading audio file: ' + err.message);
+            }
+        }
+        
+        function setupAnalyser() {
+            if (!analyser) return;
+            
+            try {
+                // Create larger buffers for smoother visualization
+                analyser.fftSize = 2048; // This will give us 1024 data points
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                frequencyData = new Uint8Array(analyser.frequencyBinCount);
+                
+                // Initial data fill
+                analyser.getByteTimeDomainData(dataArray);
+                analyser.getByteFrequencyData(frequencyData);
+                
+                console.log('Analyser setup complete. Buffer size:', analyser.frequencyBinCount);
+                
+                // Test if we're getting valid data
+                let hasSignal = false;
+                for (let i = 0; i < dataArray.length; i++) {
+                    if (dataArray[i] !== 128) { // 128 is the center line
+                        hasSignal = true;
+                        break;
+                    }
+                }
+                console.log('Signal detected:', hasSignal);
+                
+            } catch (err) {
+                console.error('Analyser setup error:', err);
+            }
+        }
+        
+        function analyzeFrequencies() {
+            if (!analyser) return { bass: 0, mid: 0, treble: 0, dominantFreq: 1, energy: 0 };
+            
+            analyser.getByteFrequencyData(frequencyData);
+            
+            const bassEnd = Math.floor(frequencyData.length * 0.1);
+            const midEnd = Math.floor(frequencyData.length * 0.4);
+            
+            let bassSum = 0, midSum = 0, trebleSum = 0;
+            let maxAmplitude = 0;
+            let dominantBin = 0;
+            let totalEnergy = 0;
+            
+            // Enhanced frequency analysis with energy calculation
+            for (let i = 0; i < frequencyData.length; i++) {
+                const amplitude = frequencyData[i];
+                totalEnergy += amplitude * amplitude; // Square for better energy measurement
+                
+                if (i < bassEnd) {
+                    bassSum += amplitude;
+                } else if (i < midEnd) {
+                    midSum += amplitude;
+                } else {
+                    trebleSum += amplitude;
+                }
+                
+                if (amplitude > maxAmplitude) {
+                    maxAmplitude = amplitude;
+                    dominantBin = i;
+                }
+            }
+            
+            // Normalize values with improved sensitivity
+            const bass = Math.pow(bassSum / bassEnd / 255, 1.5); // More sensitive to bass
+            const mid = midSum / (midEnd - bassEnd) / 255;
+            const treble = Math.pow(trebleSum / (frequencyData.length - midEnd) / 255, 0.8); // More sensitive to high frequencies
+            const energy = Math.sqrt(totalEnergy) / (frequencyData.length * 255); // Normalized total energy
+            
+            // Enhanced dominant frequency calculation
+            const dominantFreq = Math.max(0.5, dominantBin / frequencyData.length * 10);
+            
+            return { bass, mid, treble, dominantFreq, energy };
+        }
+        
+        function updateMusicReactivity(freqAnalysis) {
+            const reactivity = parseFloat(reactivitySlider.value);
+            const smoothing = 0.8 - (reactivity * 0.1); // Faster response with higher reactivity
+            
+            // Enhanced smoothing with non-linear response
+            smoothedBass = smoothedBass * smoothing + freqAnalysis.bass * (1 - smoothing);
+            smoothedMid = smoothedMid * smoothing + freqAnalysis.mid * (1 - smoothing);
+            smoothedTreble = smoothedTreble * smoothing + freqAnalysis.treble * (1 - smoothing);
+            smoothedEnergy = smoothedEnergy * smoothing + freqAnalysis.energy * (1 - smoothing);
+            
+            // Non-linear scaling for more dramatic effects
+            const bassMultiplier = 1 + Math.pow(smoothedBass * reactivity, 1.5) * 3;
+            const midMultiplier = 1 + Math.pow(smoothedMid * reactivity, 1.2) * 2;
+            const trebleMultiplier = 1 + Math.pow(smoothedTreble * reactivity, 0.8) * 2;
+            
+            // Enhanced frequency modulation with music influence
+            const energyInfluence = Math.pow(smoothedEnergy, 0.5) * reactivity;
+            const dominantInfluence = Math.sin(freqAnalysis.dominantFreq * time * 0.2) * reactivity;
+            
+            musicInfluence = {
+                freqX: baseFreqX * bassMultiplier + dominantInfluence,
+                freqY: baseFreqY * midMultiplier - dominantInfluence * 0.5,
+                freqZ: baseFreqZ * trebleMultiplier + energyInfluence,
+                speed: 1 + smoothedEnergy * reactivity * 2,
+                amplitude: 1 + Math.pow(smoothedEnergy, 1.5) * reactivity
+            };
+        }
+        
+        function stopAudio() {
+            if (audioContext) {
+                audioContext.close();
+            }
+            startBtn.textContent = 'Start Microphone';
+            isRunning = false;
+        }
+        
+        function switchMode(to3D) {
+            is3DMode = to3D;
+            if (to3D) {
+                canvas.style.display = 'none';
+                threeContainer.style.display = 'block';
+                threeContainer.style.width = '800px';
+                threeContainer.style.height = '400px';
+                init3D();
+                mode3dBtn.classList.add('active');
+                mode2dBtn.classList.remove('active');
+            } else {
+                canvas.style.display = 'block';
+                threeContainer.style.display = 'none';
+                mode2dBtn.classList.add('active');
+                mode3dBtn.classList.remove('active');
+            }
+        }
+        
+        function init3D() {
+            // Clean up existing scene
+            while(threeContainer.firstChild) {
+                threeContainer.removeChild(threeContainer.firstChild);
+            }
+            
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, 800/400, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(800, 400);
+            renderer.setClearColor(0x001100);
+            threeContainer.appendChild(renderer.domElement);
+            
+            // Create multiple Lissajous curves for trail effect
+            lissajousPoints = [];
+            const numTrails = 10; // Number of trail lines
+            
+            for (let i = 0; i < numTrails; i++) {
+                const geometry = new THREE.BufferGeometry();
+                const positions = new Float32Array(1000 * 3);
+                geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                
+                const material = new THREE.LineBasicMaterial({ 
+                    color: 0x00ff00,
+                    transparent: true,
+                    opacity: 1 - (i / numTrails) // Decreasing opacity for trail effect
+                });
+                
+                const line = new THREE.Line(geometry, material);
+                scene.add(line);
+                lissajousPoints.push({
+                    line: line,
+                    positions: positions,
+                    material: material
+                });
+            }
+            
+            camera.position.z = 5;
+            
+            // Add some lighting
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            scene.add(ambientLight);
+        }
+        
+        function animate() {
+            if (!isRunning) return;
+            requestAnimationFrame(animate);
+            
+            if (is3DMode) {
+                animate3D();
+            } else {
+                animate2D();
+            }
+        }
+        
+        function animate2D() {
+            // Analyze music frequencies
+            const freqAnalysis = analyzeFrequencies();
+            updateMusicReactivity(freqAnalysis);
+            
+            // Trail effect
+            const trailAmount = parseFloat(trailSlider.value);
+            ctx.fillStyle = `rgba(0, 17, 0, ${1 - trailAmount})`;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            drawGrid();
+            
+            const mode = visualMode.value;
+            if (mode === 'sinewave') {
+                drawOscilloscope();
+            } else if (mode === 'lissajous') {
+                drawLissajous();
+            }
+        }
+        
+        function drawGrid() {
+            ctx.strokeStyle = '#003300';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([2, 2]);
+            
+            // Draw horizontal lines
+            for (let y = 0; y <= canvas.height; y += 40) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // Draw vertical lines
+            for (let x = 0; x <= canvas.width; x += 40) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            
+            // Reset line style
+            ctx.setLineDash([]);
+        }
+
+        function drawOscilloscope() {
+            if (!analyser || !dataArray) return;
+            
+            // Get the time domain data
+            analyser.getByteTimeDomainData(dataArray);
+            
+            ctx.strokeStyle = colorPicker.value;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            
+            const sliceWidth = canvas.width / dataArray.length;
+            let x = 0;
+            const gain = parseFloat(gainSlider.value);
+            
+            for (let i = 0; i < dataArray.length; i++) {
+                // Convert the data point to a value between -1 and 1
+                const v = ((dataArray[i] / 128.0) - 1.0) * gain;
+                const y = (canvas.height / 2) + (v * canvas.height / 3);
+                
+                if (i === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+                
+                x += sliceWidth;
+            }
+            
+            ctx.stroke();
+            
+            // Add glow effect
+            ctx.shadowColor = colorPicker.value;
+            ctx.shadowBlur = 5 + (smoothedEnergy * 15);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+        }
+        
+        function drawLissajous() {
+            ctx.strokeStyle = colorPicker.value;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+            const baseRadius = Math.min(canvas.width, canvas.height) / 3;
+            
+            // Ensure we have some movement even without audio
+            const defaultAmplitude = 1;
+            const reactiveFreqX = (musicInfluence.freqX !== undefined) ? musicInfluence.freqX : baseFreqX;
+            const reactiveFreqY = (musicInfluence.freqY !== undefined) ? musicInfluence.freqY : baseFreqY;
+            const reactiveAmplitude = (musicInfluence.amplitude !== undefined) ? musicInfluence.amplitude : defaultAmplitude;
+            const radius = baseRadius * reactiveAmplitude;
+            
+            let firstPoint = true;
+            const timeInfluence = time * ((musicInfluence.speed || 1) * 0.5);
+            
+            // Draw more points for smoother curves
+            for (let t = 0; t <= Math.PI * 8; t += 0.01) {
+                const x = centerX + radius * Math.sin(reactiveFreqX * t + timeInfluence);
+                const y = centerY + radius * Math.sin(reactiveFreqY * t + timeInfluence * 0.8);
+                
+                if (firstPoint) {
+                    ctx.moveTo(x, y);
+                    firstPoint = false;
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            }
+            
+            ctx.stroke();
+            
+            // Always add some base glow
+            ctx.shadowColor = colorPicker.value;
+            ctx.shadowBlur = 5 + (smoothedEnergy * 15);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+            
+            time += 0.01;
+        }
+        
+        function drawSpectrum() {
+            // Spectrum drawing code here
+        }
+        
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                }
+            }
+        }
+        
+        function exportImage() {
+            const link = document.createElement('a');
+            link.download = 'oscilloscope.png';
+            link.href = canvas.toDataURL();
+            link.click();
+        }
+        
+        function animate3D() {
+            if (!scene || !renderer) return;
+            
+            // Analyze music frequencies for 3D too
+            const freqAnalysis = analyzeFrequencies();
+            updateMusicReactivity(freqAnalysis);
+            
+            // Update trails
+            const trailAmount = parseFloat(trailSlider.value);
+            lissajousPoints.forEach((point, index) => {
+                point.material.opacity = (1 - (index / lissajousPoints.length)) * trailAmount;
+                
+                // Update color
+                const color = new THREE.Color(colorPicker.value);
+                point.material.color = color;
+            });
+            
+            // Music-reactive camera movement
+            const reactivity = parseFloat(reactivitySlider.value);
+            const bassInfluence = smoothedBass * reactivity;
+            const midInfluence = smoothedMid * reactivity;
+            
+            time += 0.01;
+            
+            // Smooth camera movement based on audio
+            camera.position.x = Math.cos(time * 0.5 + bassInfluence) * (8 + midInfluence * 4);
+            camera.position.y = Math.sin(time * 0.3 + bassInfluence) * (4 + midInfluence * 2);
+            camera.position.z = 5 + Math.sin(time * 0.2) * smoothedTreble * reactivity * 3;
+            camera.lookAt(0, 0, 0);
+            
+            // Update Lissajous pattern
+            update3DLissajous();
+            
+            // Render the scene
+            renderer.render(scene, camera);
+        }
+        
+        function update3DLissajous() {
+            if (!lissajousPoints || !lissajousPoints.length) return;
+            
+            const reactiveFreqX = musicInfluence.freqX || baseFreqX;
+            const reactiveFreqY = musicInfluence.freqY || baseFreqY;
+            const reactiveFreqZ = musicInfluence.freqZ || baseFreqZ;
+            const amplitude = (musicInfluence.amplitude || 1) * 2;
+            const speed = musicInfluence.speed || 1;
+            
+            // Update each trail line
+            lissajousPoints.forEach((point, trailIndex) => {
+                const timeOffset = trailIndex * 0.1; // Time offset for trail effect
+                const positions = point.positions;
+                
+                // Calculate phase shifts based on audio
+                const phaseX = (time - timeOffset) * speed * 0.5;
+                const phaseY = (time - timeOffset) * speed * 0.7;
+                const phaseZ = (time - timeOffset) * speed * 0.3;
+                
+                // Generate 3D curve points
+                for (let i = 0; i < 1000; i++) {
+                    const t = (i / 1000) * Math.PI * 6;
+                    
+                    // Complex modulation for more interesting patterns
+                    const xMod = Math.sin(t * 0.1 + smoothedBass * 5);
+                    const yMod = Math.cos(t * 0.2 + smoothedMid * 3);
+                    const zMod = Math.sin(t * 0.3 + smoothedTreble * 4);
+                    
+                    positions[i * 3] = amplitude * Math.sin(reactiveFreqX * t + phaseX) * (1 + xMod * 0.2);
+                    positions[i * 3 + 1] = amplitude * Math.sin(reactiveFreqY * t + phaseY) * (1 + yMod * 0.2);
+                    positions[i * 3 + 2] = amplitude * Math.sin(reactiveFreqZ * t + phaseZ) * (1 + zMod * 0.2);
+                }
+                
+                point.line.geometry.attributes.position.needsUpdate = true;
+            });
+        }
+    </script>
+</body>
+</html>
